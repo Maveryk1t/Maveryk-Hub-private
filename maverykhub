@@ -93,10 +93,6 @@ local config = {
     autoPlant = false,
     autoHatch = false,
     autoNests = false,
-    sacrificeQueen = false,
-    sacrificeKing = false,
-    sacrificeFrozen = false,
-    sacrificeWalrus = false,
     doubleJump = false,
     wallspeed = 16,
 }
@@ -149,6 +145,9 @@ local eggData = {
     { name = "Lava Monster Boss Egg", zone = "Boss2" },
     { name = "Tiki Boss Egg", zone = "Boss4" },
 }
+local plantSpeed = 0.01
+local hatchSpeed = 0.01
+local nestsSpeed = 0.01
 
 local function getZone(name)
     return zoneCache[name]
@@ -220,7 +219,6 @@ local function attackAllEnemies(zoneName, needsRequest)
         end
     end
 end
-
 local plantThreads = {}
 local function plantWorker(id)
     while active and plantThreads[id] and config.autoPlant do
@@ -231,14 +229,14 @@ local function plantWorker(id)
                 end
             end
         end
-        task.wait(0.001)
+        task.wait(plantSpeed)
     end
 end
 local hatchThreads = {}
 local function hatchWorker(id)
     while active and hatchThreads[id] and config.autoHatch do
         pcall(HatchRemote.FireServer, HatchRemote)
-        task.wait(0.001)
+        task.wait(hatchSpeed)
     end
 end
 local nestsThreads = {}
@@ -250,7 +248,7 @@ local function nestsWorker(id)
                 pcall(FeedRemote.FireServer, FeedRemote, nest)
             end
         end
-        task.wait(0.001)
+        task.wait(nestsSpeed)
     end
 end
 local bossThreads = {}
@@ -306,56 +304,57 @@ local function foodWorker(id)
         task.wait(config.foodSpeed)
     end
 end
-local sacrificeThread = nil
-local sacrificeCount = 0
-local sacrificeActive = false
-local function sacrificeWorker()
-    pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "SummerEventZone")
-    task.wait(1)
-    sacrificeCount = 0
-    sacrificeActive = true
-    while active and sacrificeActive and sacrificeCount < 10 do
-        local sent = 0
-        if config.sacrificeQueen then
-            pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Queen Bee")
-            sent = sent + 1
-        end
-        if config.sacrificeKing then
-            pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "King Bee")
-            sent = sent + 1
-        end
-        if config.sacrificeFrozen then
-            pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Frozen Werewolf")
-            sent = sent + 1
-        end
-        if config.sacrificeWalrus then
-            pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Walrus")
-            sent = sent + 1
-        end
-        sacrificeCount = sacrificeCount + sent
-        if sacrificeCount >= 10 then
-            sacrificeActive = false
-            break
-        end
-        task.wait(5)
+
+local sacrificeLoopActive = {
+    queen = false,
+    king = false,
+    frozen = false,
+    walrus = false
+}
+local sacrificeThreads = {}
+local function doSacrifice(petName)
+    local success = pcall(function()
+        SacrificeRemote:InvokeServer("SacrificeWell", petName)
+    end)
+    if success then
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Sacrifice",
+            Text = petName .. " sacrificed!",
+            Duration = 2
+        })
     end
-    sacrificeThread = nil
+    return success
 end
-local function startSacrifice()
-    if sacrificeThread then
-        task.cancel(sacrificeThread)
-        sacrificeThread = nil
+local function toggleSacrificeLoop(petName, enable)
+    if enable then
+        if sacrificeThreads[petName] then
+            task.cancel(sacrificeThreads[petName])
+            sacrificeThreads[petName] = nil
+        end
+        sacrificeThreads[petName] = task.spawn(function()
+            pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "SummerEventZone")
+            task.wait(1)
+            while active and sacrificeLoopActive[petName:lower()] do
+                doSacrifice(petName)
+                task.wait(5)
+            end
+        end)
+    else
+        if sacrificeThreads[petName] then
+            task.cancel(sacrificeThreads[petName])
+            sacrificeThreads[petName] = nil
+        end
     end
-    sacrificeCount = 0
-    sacrificeActive = true
-    sacrificeThread = task.spawn(sacrificeWorker)
 end
-local function stopSacrifice()
-    sacrificeActive = false
-    if sacrificeThread then
-        task.cancel(sacrificeThread)
-        sacrificeThread = nil
+local function stopAllSacrificeLoops()
+    for petName, thread in pairs(sacrificeThreads) do
+        task.cancel(thread)
+        sacrificeThreads[petName] = nil
     end
+    sacrificeLoopActive.queen = false
+    sacrificeLoopActive.king = false
+    sacrificeLoopActive.frozen = false
+    sacrificeLoopActive.walrus = false
 end
 local function scanBosses()
     if not config.farmBosses then return end
@@ -379,7 +378,6 @@ local function bossScanLoop()
         task.wait(15)
     end
 end
-
 local function stopAllThreads()
     plantThreads = {}
     hatchThreads = {}
@@ -387,7 +385,7 @@ local function stopAllThreads()
     bossThreads = {}
     enemyThreads = {}
     foodThreads = {}
-    stopSacrifice()
+    stopAllSacrificeLoops()
     activeBosses = {}
     petCacheValid = false
 end
@@ -418,18 +416,15 @@ local function start()
         foodThreads[i] = true
         task.spawn(function() foodWorker(i) end)
     end
-    if config.sacrificeQueen or config.sacrificeKing or config.sacrificeFrozen or config.sacrificeWalrus then
-        startSacrifice()
-    end
 end
 local function stop()
     active = false
     stopAllThreads()
 end
 local win = Rayfield:CreateWindow({
-    Name = "Maveryk Hub - 2x",
+    Name = "Maveryk Hub - Sacrifice Fix",
     LoadingTitle = "Loading...",
-    LoadingSubtitle = "2x Threads | Sem Lag",
+    LoadingSubtitle = "2x Threads | Loop de Sacrifício Corrigido",
     ConfigurationSaving = { Enabled = true, FolderName = "MaverykHub", FileName = "Config" },
     Theme = "Dark"
 })
@@ -446,7 +441,6 @@ local eggStatus = mainTab:CreateLabel("Eggs: OFF")
 local nestStatus = mainTab:CreateLabel("Nests: OFF")
 local sacrificeStatus = mainTab:CreateLabel("Sacrifice: OFF")
 local miscStatus = mainTab:CreateLabel("Misc: OFF")
-local sacrificeCountLabel = mainTab:CreateLabel("Sacrifice Count: 0/10")
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -465,10 +459,9 @@ task.spawn(function()
             foodStatus:Set("Food: " .. (anyFood and "ON" or "OFF"))
             eggStatus:Set("Eggs: " .. ((config.autoPlant or config.autoHatch) and "ON" or "OFF"))
             nestStatus:Set("Nests: " .. (config.autoNests and "ON" or "OFF"))
-            local sacOn = config.sacrificeQueen or config.sacrificeKing or config.sacrificeFrozen or config.sacrificeWalrus
+            local sacOn = sacrificeLoopActive.queen or sacrificeLoopActive.king or sacrificeLoopActive.frozen or sacrificeLoopActive.walrus
             sacrificeStatus:Set("Sacrifice: " .. (sacOn and "ON" or "OFF"))
             miscStatus:Set("Misc: " .. (config.doubleJump and "ON" or "OFF"))
-            sacrificeCountLabel:Set("Sacrifice Count: " .. sacrificeCount .. "/10")
         else
             statusLabel:Set("Status: Stopped")
             bossStatus:Set("Bosses: OFF")
@@ -478,7 +471,6 @@ task.spawn(function()
             nestStatus:Set("Nests: OFF")
             sacrificeStatus:Set("Sacrifice: OFF")
             miscStatus:Set("Misc: OFF")
-            sacrificeCountLabel:Set("Sacrifice Count: 0/10")
         end
     end
 end)
@@ -547,20 +539,46 @@ for _, name in ipairs(bossList) do
     })
 end
 local eggTab = win:CreateTab("Eggs")
-eggTab:CreateSection("EGGS 2x")
+eggTab:CreateSection("EGGS 2x - Velocidade Ajustável")
 eggTab:CreateLabel("⚡ 2 THREADS POR FUNÇÃO ⚡")
-eggTab:CreateLabel("• Delay mínimo entre ações")
-eggTab:CreateLabel("• Sem lag - Máxima eficiência")
+eggTab:CreateLabel("• 0.001s = Máxima velocidade")
+eggTab:CreateLabel("• 0.01s = Rápido e estável (recomendado)")
+eggTab:CreateLabel("• 0.1s+ = Mais lento, seguro")
+eggTab:CreateLabel(" ")
 eggTab:CreateSection("PLANT")
 eggTab:CreateToggle({ Name = "Enable Auto Plant", CurrentValue = config.autoPlant, Callback = function(v) config.autoPlant = v end })
+eggTab:CreateSlider({ 
+    Name = "Plant Speed (s)", 
+    Range = {0.001, 1}, 
+    Increment = 0.001, 
+    Suffix = "s", 
+    CurrentValue = plantSpeed, 
+    Callback = function(v) plantSpeed = v end 
+})
 eggTab:CreateLabel("• 9 eggs per zone")
 eggTab:CreateLabel("• 2 threads")
 eggTab:CreateSection("HATCH")
 eggTab:CreateToggle({ Name = "Enable Auto Hatch", CurrentValue = config.autoHatch, Callback = function(v) config.autoHatch = v end })
+eggTab:CreateSlider({ 
+    Name = "Hatch Speed (s)", 
+    Range = {0.001, 1}, 
+    Increment = 0.001, 
+    Suffix = "s", 
+    CurrentValue = hatchSpeed, 
+    Callback = function(v) hatchSpeed = v end 
+})
 eggTab:CreateLabel("• 1 hatch per cycle")
 eggTab:CreateLabel("• 2 threads")
 eggTab:CreateSection("NESTS")
 eggTab:CreateToggle({ Name = "Enable Auto Nests", CurrentValue = config.autoNests, Callback = function(v) config.autoNests = v end })
+eggTab:CreateSlider({ 
+    Name = "Nests Speed (s)", 
+    Range = {0.001, 1}, 
+    Increment = 0.001, 
+    Suffix = "s", 
+    CurrentValue = nestsSpeed, 
+    Callback = function(v) nestsSpeed = v end 
+})
 eggTab:CreateLabel("• All nests per cycle")
 eggTab:CreateLabel("• 2 threads")
 eggTab:CreateSection("Select Eggs to Plant")
@@ -589,105 +607,69 @@ eggTab:CreateButton({
         end
     end
 })
+
 local sacrificeTab = win:CreateTab("Sacrifice")
 sacrificeTab:CreateSection("SACRIFICE LOOP - 5 SECONDS")
-sacrificeTab:CreateLabel("⚡ Max 10 calls, then stops ⚡")
+sacrificeTab:CreateLabel("⚡ Ative o toggle para loop infinito ⚡")
+sacrificeTab:CreateLabel("• Cada pet tem seu próprio loop")
+sacrificeTab:CreateLabel("• Botão Once funciona independente")
+sacrificeTab:CreateLabel(" ")
 sacrificeTab:CreateSection("Mythical")
 sacrificeTab:CreateToggle({ 
     Name = "Queen Bee (Mythical) - Loop", 
-    CurrentValue = config.sacrificeQueen, 
+    CurrentValue = sacrificeLoopActive.queen, 
     Callback = function(v) 
-        config.sacrificeQueen = v
-        if active then
-            stopSacrifice()
-            if config.sacrificeQueen or config.sacrificeKing or config.sacrificeFrozen or config.sacrificeWalrus then
-                startSacrifice()
-            end
-        end
+        sacrificeLoopActive.queen = v
+        toggleSacrificeLoop("Queen Bee", v)
     end 
 })
 sacrificeTab:CreateButton({ 
     Name = "Sacrifice Queen Bee (Once)", 
     Callback = function() 
-        pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Queen Bee")
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Sacrifice",
-            Text = "Queen Bee sacrificed!",
-            Duration = 2
-        })
+        doSacrifice("Queen Bee")
     end 
 })
 sacrificeTab:CreateToggle({ 
     Name = "Frozen Werewolf (Mythical) - Loop", 
-    CurrentValue = config.sacrificeFrozen, 
+    CurrentValue = sacrificeLoopActive.frozen, 
     Callback = function(v) 
-        config.sacrificeFrozen = v
-        if active then
-            stopSacrifice()
-            if config.sacrificeQueen or config.sacrificeKing or config.sacrificeFrozen or config.sacrificeWalrus then
-                startSacrifice()
-            end
-        end
+        sacrificeLoopActive.frozen = v
+        toggleSacrificeLoop("Frozen Werewolf", v)
     end 
 })
 sacrificeTab:CreateButton({ 
     Name = "Sacrifice Frozen Werewolf (Once)", 
     Callback = function() 
-        pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Frozen Werewolf")
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Sacrifice",
-            Text = "Frozen Werewolf sacrificed!",
-            Duration = 2
-        })
+        doSacrifice("Frozen Werewolf")
     end 
 })
 sacrificeTab:CreateSection("Legendary")
 sacrificeTab:CreateToggle({ 
     Name = "King Bee (Legendary) - Loop", 
-    CurrentValue = config.sacrificeKing, 
+    CurrentValue = sacrificeLoopActive.king, 
     Callback = function(v) 
-        config.sacrificeKing = v
-        if active then
-            stopSacrifice()
-            if config.sacrificeQueen or config.sacrificeKing or config.sacrificeFrozen or config.sacrificeWalrus then
-                startSacrifice()
-            end
-        end
+        sacrificeLoopActive.king = v
+        toggleSacrificeLoop("King Bee", v)
     end 
 })
 sacrificeTab:CreateButton({ 
     Name = "Sacrifice King Bee (Once)", 
     Callback = function() 
-        pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "King Bee")
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Sacrifice",
-            Text = "King Bee sacrificed!",
-            Duration = 2
-        })
+        doSacrifice("King Bee")
     end 
 })
 sacrificeTab:CreateToggle({ 
     Name = "Walrus (Legendary) - Loop", 
-    CurrentValue = config.sacrificeWalrus, 
+    CurrentValue = sacrificeLoopActive.walrus, 
     Callback = function(v) 
-        config.sacrificeWalrus = v
-        if active then
-            stopSacrifice()
-            if config.sacrificeQueen or config.sacrificeKing or config.sacrificeFrozen or config.sacrificeWalrus then
-                startSacrifice()
-            end
-        end
+        sacrificeLoopActive.walrus = v
+        toggleSacrificeLoop("Walrus", v)
     end 
 })
 sacrificeTab:CreateButton({ 
     Name = "Sacrifice Walrus (Once)", 
     Callback = function() 
-        pcall(SacrificeRemote.InvokeServer, SacrificeRemote, "SacrificeWell", "Walrus")
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Sacrifice",
-            Text = "Walrus sacrificed!",
-            Duration = 2
-        })
+        doSacrifice("Walrus")
     end 
 })
 local miscTab = win:CreateTab("Misc")
@@ -737,6 +719,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 game:GetService("StarterGui"):SetCore("SendNotification", {
     Title = "Maveryk Hub",
-    Text = "2x Threads | Sem Lag",
+    Text = "Insane Farm",
     Duration = 3
 })
