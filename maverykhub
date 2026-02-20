@@ -309,7 +309,9 @@ local sacrificeLoopActive = {
     queen = false,
     king = false,
     frozen = false,
-    walrus = false
+    walrus = false,
+    fennec = false,
+    mystic = false
 }
 local sacrificeThreads = {}
 local function doSacrifice(petName)
@@ -326,35 +328,39 @@ local function doSacrifice(petName)
     return success
 end
 local function toggleSacrificeLoop(petName, enable)
+    local key = petName:lower():gsub(" ", "")
     if enable then
-        if sacrificeThreads[petName] then
-            task.cancel(sacrificeThreads[petName])
-            sacrificeThreads[petName] = nil
+        if sacrificeThreads[key] then
+            task.cancel(sacrificeThreads[key])
+            sacrificeThreads[key] = nil
         end
-        sacrificeThreads[petName] = task.spawn(function()
+        sacrificeThreads[key] = task.spawn(function()
             pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "SummerEventZone")
+            pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "ElementEventZone1")
             task.wait(1)
-            while active and sacrificeLoopActive[petName:lower()] do
+            while active and sacrificeLoopActive[key] do
                 doSacrifice(petName)
                 task.wait(5)
             end
         end)
     else
-        if sacrificeThreads[petName] then
-            task.cancel(sacrificeThreads[petName])
-            sacrificeThreads[petName] = nil
+        if sacrificeThreads[key] then
+            task.cancel(sacrificeThreads[key])
+            sacrificeThreads[key] = nil
         end
     end
 end
 local function stopAllSacrificeLoops()
-    for petName, thread in pairs(sacrificeThreads) do
+    for _, thread in pairs(sacrificeThreads) do
         task.cancel(thread)
-        sacrificeThreads[petName] = nil
     end
+    sacrificeThreads = {}
     sacrificeLoopActive.queen = false
     sacrificeLoopActive.king = false
     sacrificeLoopActive.frozen = false
     sacrificeLoopActive.walrus = false
+    sacrificeLoopActive.fennec = false
+    sacrificeLoopActive.mystic = false
 end
 local function scanBosses()
     if not config.farmBosses then return end
@@ -422,9 +428,9 @@ local function stop()
     stopAllThreads()
 end
 local win = Rayfield:CreateWindow({
-    Name = "Maveryk Hub - Sacrifice Fix",
+    Name = "Maveryk Hub - Completo",
     LoadingTitle = "Loading...",
-    LoadingSubtitle = "2x Threads | Loop de Sacrifício Corrigido",
+    LoadingSubtitle = "2x Threads | Sacrifice Fix | Sphinx",
     ConfigurationSaving = { Enabled = true, FolderName = "MaverykHub", FileName = "Config" },
     Theme = "Dark"
 })
@@ -459,7 +465,7 @@ task.spawn(function()
             foodStatus:Set("Food: " .. (anyFood and "ON" or "OFF"))
             eggStatus:Set("Eggs: " .. ((config.autoPlant or config.autoHatch) and "ON" or "OFF"))
             nestStatus:Set("Nests: " .. (config.autoNests and "ON" or "OFF"))
-            local sacOn = sacrificeLoopActive.queen or sacrificeLoopActive.king or sacrificeLoopActive.frozen or sacrificeLoopActive.walrus
+            local sacOn = sacrificeLoopActive.queen or sacrificeLoopActive.king or sacrificeLoopActive.frozen or sacrificeLoopActive.walrus or sacrificeLoopActive.fennec or sacrificeLoopActive.mystic
             sacrificeStatus:Set("Sacrifice: " .. (sacOn and "ON" or "OFF"))
             miscStatus:Set("Misc: " .. (config.doubleJump and "ON" or "OFF"))
         else
@@ -614,7 +620,7 @@ sacrificeTab:CreateLabel("⚡ Ative o toggle para loop infinito ⚡")
 sacrificeTab:CreateLabel("• Cada pet tem seu próprio loop")
 sacrificeTab:CreateLabel("• Botão Once funciona independente")
 sacrificeTab:CreateLabel(" ")
-sacrificeTab:CreateSection("Mythical")
+sacrificeTab:CreateSection("SUMMER EVENT")
 sacrificeTab:CreateToggle({ 
     Name = "Queen Bee (Mythical) - Loop", 
     CurrentValue = sacrificeLoopActive.queen, 
@@ -630,21 +636,6 @@ sacrificeTab:CreateButton({
     end 
 })
 sacrificeTab:CreateToggle({ 
-    Name = "Frozen Werewolf (Mythical) - Loop", 
-    CurrentValue = sacrificeLoopActive.frozen, 
-    Callback = function(v) 
-        sacrificeLoopActive.frozen = v
-        toggleSacrificeLoop("Frozen Werewolf", v)
-    end 
-})
-sacrificeTab:CreateButton({ 
-    Name = "Sacrifice Frozen Werewolf (Once)", 
-    Callback = function() 
-        doSacrifice("Frozen Werewolf")
-    end 
-})
-sacrificeTab:CreateSection("Legendary")
-sacrificeTab:CreateToggle({ 
     Name = "King Bee (Legendary) - Loop", 
     CurrentValue = sacrificeLoopActive.king, 
     Callback = function(v) 
@@ -656,6 +647,21 @@ sacrificeTab:CreateButton({
     Name = "Sacrifice King Bee (Once)", 
     Callback = function() 
         doSacrifice("King Bee")
+    end 
+})
+sacrificeTab:CreateSection("WINTER EVENT")
+sacrificeTab:CreateToggle({ 
+    Name = "Frozen Werewolf (Mythical) - Loop", 
+    CurrentValue = sacrificeLoopActive.frozen, 
+    Callback = function(v) 
+        sacrificeLoopActive.frozen = v
+        toggleSacrificeLoop("Frozen Werewolf", v)
+    end 
+})
+sacrificeTab:CreateButton({ 
+    Name = "Sacrifice Frozen Werewolf (Once)", 
+    Callback = function() 
+        doSacrifice("Frozen Werewolf")
     end 
 })
 sacrificeTab:CreateToggle({ 
@@ -670,6 +676,35 @@ sacrificeTab:CreateButton({
     Name = "Sacrifice Walrus (Once)", 
     Callback = function() 
         doSacrifice("Walrus")
+    end 
+})
+sacrificeTab:CreateSection("SPHINX EVENT")
+sacrificeTab:CreateToggle({ 
+    Name = "Fennec Fox (Mythical) - Loop", 
+    CurrentValue = sacrificeLoopActive.fennec, 
+    Callback = function(v) 
+        sacrificeLoopActive.fennec = v
+        toggleSacrificeLoop("Fennec Fox", v)
+    end 
+})
+sacrificeTab:CreateButton({ 
+    Name = "Sacrifice Fennec Fox (Once)", 
+    Callback = function() 
+        doSacrifice("Fennec Fox")
+    end 
+})
+sacrificeTab:CreateToggle({ 
+    Name = "Mystic Camel (Legendary) - Loop", 
+    CurrentValue = sacrificeLoopActive.mystic, 
+    Callback = function(v) 
+        sacrificeLoopActive.mystic = v
+        toggleSacrificeLoop("Mystic Camel", v)
+    end 
+})
+sacrificeTab:CreateButton({ 
+    Name = "Sacrifice Mystic Camel (Once)", 
+    Callback = function() 
+        doSacrifice("Mystic Camel")
     end 
 })
 local miscTab = win:CreateTab("Misc")
@@ -719,6 +754,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 game:GetService("StarterGui"):SetCore("SendNotification", {
     Title = "Maveryk Hub",
-    Text = "Insane Farm",
+    Text = "Completo | Sacrifice Corrigido | Sphinx",
     Duration = 3
 })
