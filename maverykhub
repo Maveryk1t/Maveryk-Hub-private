@@ -15,28 +15,37 @@ local PlantRemote = Events and Events:FindFirstChild("PlantEggEvent")
 local FeedRemote = Events and Events:FindFirstChild("FeedEggEvent")
 local SacrificeRemote = Functions and Functions:FindFirstChild("SacrificeFunction")
 local ZonesRF = Functions and Functions:FindFirstChild("ZonesRF")
+
+local plantExists = PlantRemote ~= nil
+local hatchExists = HatchRemote ~= nil
+local feedExists = FeedRemote ~= nil
+local combatExists = CombatRemote ~= nil
+local collectExists = CollectionRemote ~= nil
+local sacrificeExists = SacrificeRemote ~= nil
+local zonesExists = ZonesRF ~= nil
+
 local function safeCombat(...)
-    if CombatRemote then
+    if combatExists then
         pcall(CombatRemote.InvokeServer, CombatRemote, ...)
     end
 end
 local function safeCollect(...)
-    if CollectionRemote then
+    if collectExists then
         pcall(CollectionRemote.InvokeServer, CollectionRemote, ...)
     end
 end
 local function safeHatch()
-    if HatchRemote then
+    if hatchExists then
         pcall(HatchRemote.FireServer, HatchRemote)
     end
 end
 local function safePlant(zone)
-    if PlantRemote then
+    if plantExists then
         pcall(PlantRemote.FireServer, PlantRemote, zone)
     end
 end
 local function safeFeed(nest)
-    if FeedRemote then
+    if feedExists then
         pcall(FeedRemote.FireServer, FeedRemote, nest)
     end
 end
@@ -50,7 +59,6 @@ local jumpCount = 0
 local petCache = {}
 local petCacheValid = false
 local nestsCache = nil
-local lastNestCacheUpdate = 0
 local startDebounce = false
 local bossZoneMap = {
     Naga = "Zone2B1",
@@ -95,6 +103,7 @@ local config = {
     autoNests = false,
     doubleJump = false,
     wallspeed = 16,
+    eggThreads = 2,
 }
 local bossList = {
     "Naga", "Lava Monster", "Tiki Monster",
@@ -119,6 +128,9 @@ for _, z in ipairs(zoneList) do
         zoneCache[z] = result
     end
 end
+pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "Zone12.1")
+pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "Zone12")
+
 local eggData = {
     { name = "Summer Egg", zone = "SummerEvent1" },
     { name = "Winter Egg", zone = "WinterEvent1" },
@@ -145,9 +157,14 @@ local eggData = {
     { name = "Lava Monster Boss Egg", zone = "Boss2" },
     { name = "Tiki Boss Egg", zone = "Boss4" },
 }
-local plantSpeed = 0.01
-local hatchSpeed = 0.01
-local nestsSpeed = 0.01
+
+local plantSpeed = 0.005
+local hatchSpeed = 0.005
+local nestsSpeed = 0.005
+local heartbeat = RunService.Heartbeat
+local plantEvent = Instance.new("BindableEvent")
+local hatchEvent = Instance.new("BindableEvent")
+local nestsEvent = Instance.new("BindableEvent")
 
 local function getZone(name)
     return zoneCache[name]
@@ -179,10 +196,8 @@ if LocalPlayer.Character then
     end)
 end
 local function getNests()
-    local now = os.clock()
-    if now - lastNestCacheUpdate > 10 or not nestsCache or not nestsCache.Parent then
+    if not nestsCache or not nestsCache.Parent then
         nestsCache = Workspace:FindFirstChild("Nests")
-        lastNestCacheUpdate = now
     end
     return nestsCache
 end
@@ -190,13 +205,15 @@ local function attackWithMultiplePets(enemy)
     local pets = getPets()
     if #pets == 0 then return end
     for i = 1, math.min(5, #pets) do
-        pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", enemy, pets[i])
+        if combatExists then
+            pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", enemy, pets[i])
+        end
     end
 end
 local function attackEnemy(zoneName, enemyName, needsRequest)
-    if needsRequest then
+    if needsRequest and zonesExists then
         pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", zoneName)
-        task.wait(0.1)
+        task.wait(0.05)
     end
     local zone = getZone(zoneName)
     if zone and zone:FindFirstChild("Enemies") then
@@ -207,9 +224,9 @@ local function attackEnemy(zoneName, enemyName, needsRequest)
     end
 end
 local function attackAllEnemies(zoneName, needsRequest)
-    if needsRequest then
+    if needsRequest and zonesExists then
         pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", zoneName)
-        task.wait(0.1)
+        task.wait(0.05)
     end
     local zone = getZone(zoneName)
     if zone and zone:FindFirstChild("Enemies") then
@@ -220,12 +237,16 @@ local function attackAllEnemies(zoneName, needsRequest)
     end
 end
 local plantThreads = {}
-local function plantWorker(id)
+local function ultraPlantWorker(id)
+    local zoneCache_local = {}
+    for i, zone in ipairs(eggsSelected) do
+        zoneCache_local[i] = zone
+    end
     while active and plantThreads[id] and config.autoPlant do
-        if #eggsSelected > 0 then
-            for _, zone in ipairs(eggsSelected) do
-                for _ = 1, 9 do
-                    pcall(PlantRemote.FireServer, PlantRemote, zone)
+        for _, zone in ipairs(zoneCache_local) do
+            for _ = 1, 9 do
+                if plantExists then
+                    PlantRemote:FireServer(zone)
                 end
             end
         end
@@ -233,24 +254,49 @@ local function plantWorker(id)
     end
 end
 local hatchThreads = {}
-local function hatchWorker(id)
+local function ultraHatchWorker(id)
     while active and hatchThreads[id] and config.autoHatch do
-        pcall(HatchRemote.FireServer, HatchRemote)
+        if hatchExists then
+            HatchRemote:FireServer()
+        end
         task.wait(hatchSpeed)
     end
 end
 local nestsThreads = {}
-local function nestsWorker(id)
+local function ultraNestsWorker(id)
+    local nestList = {}
     while active and nestsThreads[id] and config.autoNests do
         local nests = getNests()
         if nests then
-            for _, nest in ipairs(nests:GetChildren()) do
-                pcall(FeedRemote.FireServer, FeedRemote, nest)
+            for i, nest in ipairs(nests:GetChildren()) do
+                nestList[i] = nest
+            end
+            for _, nest in ipairs(nestList) do
+                if feedExists then
+                    FeedRemote:FireServer(nest)
+                end
             end
         end
         task.wait(nestsSpeed)
     end
 end
+plantEvent.Event:Connect(function(zone)
+    for _ = 1, 9 do
+        if plantExists then
+            PlantRemote:FireServer(zone)
+        end
+    end
+end)
+hatchEvent.Event:Connect(function()
+    if hatchExists then
+        HatchRemote:FireServer()
+    end
+end)
+nestsEvent.Event:Connect(function(nest)
+    if feedExists then
+        FeedRemote:FireServer(nest)
+    end
+end)
 local bossThreads = {}
 local function bossWorker(id)
     while active and bossThreads[id] and config.farmBosses do
@@ -259,7 +305,7 @@ local function bossWorker(id)
             if #pets > 0 then
                 local idx = 1
                 for _, boss in ipairs(activeBosses) do
-                    if boss and boss.Parent then
+                    if boss and boss.Parent and combatExists then
                         pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", boss, pets[idx])
                         idx = idx % #pets + 1
                     end
@@ -295,7 +341,9 @@ local function foodWorker(id)
                     for _, f in ipairs(foods) do
                         local pets = getPets()
                         for i = 1, math.min(5, #pets) do
-                            pcall(CollectionRemote.InvokeServer, CollectionRemote, "CollectFood", f, pets[i])
+                            if collectExists then
+                                pcall(CollectionRemote.InvokeServer, CollectionRemote, "CollectFood", f, pets[i])
+                            end
                         end
                     end
                 end
@@ -316,7 +364,9 @@ local sacrificeLoopActive = {
 local sacrificeThreads = {}
 local function doSacrifice(petName)
     local success = pcall(function()
-        SacrificeRemote:InvokeServer("SacrificeWell", petName)
+        if sacrificeExists then
+            SacrificeRemote:InvokeServer("SacrificeWell", petName)
+        end
     end)
     if success then
         game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -335,8 +385,10 @@ local function toggleSacrificeLoop(petName, enable)
             sacrificeThreads[key] = nil
         end
         sacrificeThreads[key] = task.spawn(function()
-            pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "SummerEventZone")
-            pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "ElementEventZone1")
+            if zonesExists then
+                pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "SummerEventZone")
+                pcall(ZonesRF.InvokeServer, ZonesRF, "RequestZoneMap", "ElementEventZone1")
+            end
             task.wait(1)
             while active and sacrificeLoopActive[key] do
                 doSacrifice(petName)
@@ -384,6 +436,19 @@ local function bossScanLoop()
         task.wait(15)
     end
 end
+local threadTest = {2, 3, 4, 5}
+local currentTest = 1
+local fpsThreshold = 50
+local function autoOptimizeThreads()
+    if performance.fps > fpsThreshold and config.eggThreads < 5 then
+        config.eggThreads = threadTest[currentTest]
+        currentTest = math.min(currentTest + 1, #threadTest)
+        if active then
+            stopAllThreads()
+            start()
+        end
+    end
+end
 local function stopAllThreads()
     plantThreads = {}
     hatchThreads = {}
@@ -402,13 +467,13 @@ local function start()
     stopAllThreads()
     scanBosses()
     task.spawn(bossScanLoop)
-    for i = 1, 2 do
+    for i = 1, config.eggThreads do
         plantThreads[i] = true
-        task.spawn(function() plantWorker(i) end)
+        task.spawn(function() ultraPlantWorker(i) end)
         hatchThreads[i] = true
-        task.spawn(function() hatchWorker(i) end)
+        task.spawn(function() ultraHatchWorker(i) end)
         nestsThreads[i] = true
-        task.spawn(function() nestsWorker(i) end)
+        task.spawn(function() ultraNestsWorker(i) end)
     end
     for i = 1, config.bossThreads do
         bossThreads[i] = true
@@ -428,9 +493,9 @@ local function stop()
     stopAllThreads()
 end
 local win = Rayfield:CreateWindow({
-    Name = "Maveryk Hub - Completo",
+    Name = "Maveryk Hub - Ultra Eggs",
     LoadingTitle = "Loading...",
-    LoadingSubtitle = "2x Threads | Sacrifice Fix | Sphinx",
+    LoadingSubtitle = "2-5x Threads | Ultra Rápido",
     ConfigurationSaving = { Enabled = true, FolderName = "MaverykHub", FileName = "Config" },
     Theme = "Dark"
 })
@@ -447,6 +512,7 @@ local eggStatus = mainTab:CreateLabel("Eggs: OFF")
 local nestStatus = mainTab:CreateLabel("Nests: OFF")
 local sacrificeStatus = mainTab:CreateLabel("Sacrifice: OFF")
 local miscStatus = mainTab:CreateLabel("Misc: OFF")
+local perfStatus = mainTab:CreateLabel("FPS: 0 | Threads: 2")
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -468,6 +534,7 @@ task.spawn(function()
             local sacOn = sacrificeLoopActive.queen or sacrificeLoopActive.king or sacrificeLoopActive.frozen or sacrificeLoopActive.walrus or sacrificeLoopActive.fennec or sacrificeLoopActive.mystic
             sacrificeStatus:Set("Sacrifice: " .. (sacOn and "ON" or "OFF"))
             miscStatus:Set("Misc: " .. (config.doubleJump and "ON" or "OFF"))
+            perfStatus:Set(string.format("FPS: %.0f | Threads: %d", performance.fps, config.eggThreads))
         else
             statusLabel:Set("Status: Stopped")
             bossStatus:Set("Bosses: OFF")
@@ -477,6 +544,7 @@ task.spawn(function()
             nestStatus:Set("Nests: OFF")
             sacrificeStatus:Set("Sacrifice: OFF")
             miscStatus:Set("Misc: OFF")
+            perfStatus:Set("FPS: 0 | Threads: 2")
         end
     end
 end)
@@ -545,48 +613,55 @@ for _, name in ipairs(bossList) do
     })
 end
 local eggTab = win:CreateTab("Eggs")
-eggTab:CreateSection("EGGS 2x - Velocidade Ajustável")
-eggTab:CreateLabel("⚡ 2 THREADS POR FUNÇÃO ⚡")
-eggTab:CreateLabel("• 0.001s = Máxima velocidade")
-eggTab:CreateLabel("• 0.01s = Rápido e estável (recomendado)")
-eggTab:CreateLabel("• 0.1s+ = Mais lento, seguro")
+eggTab:CreateSection("EGGS ULTRA RÁPIDO")
+eggTab:CreateLabel("⚡ THREADS AJUSTÁVEIS 2-5x ⚡")
+eggTab:CreateLabel("• 0.005s = Velocidade máxima")
+eggTab:CreateLabel("• Cache local por thread")
+eggTab:CreateLabel("• FireServer direto sem pcall")
+eggTab:CreateLabel(" • BindableEvents para ações")
 eggTab:CreateLabel(" ")
-eggTab:CreateSection("PLANT")
-eggTab:CreateToggle({ Name = "Enable Auto Plant", CurrentValue = config.autoPlant, Callback = function(v) config.autoPlant = v end })
+eggTab:CreateSection("CONFIGURAÇÃO")
+eggTab:CreateSlider({ 
+    Name = "Threads (2-5)", 
+    Range = {2, 5}, 
+    Increment = 1, 
+    CurrentValue = config.eggThreads, 
+    Callback = function(v) 
+        config.eggThreads = v
+        if active then
+            stopAllThreads()
+            start()
+        end
+    end 
+})
 eggTab:CreateSlider({ 
     Name = "Plant Speed (s)", 
-    Range = {0.001, 1}, 
+    Range = {0.001, 0.05}, 
     Increment = 0.001, 
     Suffix = "s", 
     CurrentValue = plantSpeed, 
     Callback = function(v) plantSpeed = v end 
 })
-eggTab:CreateLabel("• 9 eggs per zone")
-eggTab:CreateLabel("• 2 threads")
-eggTab:CreateSection("HATCH")
-eggTab:CreateToggle({ Name = "Enable Auto Hatch", CurrentValue = config.autoHatch, Callback = function(v) config.autoHatch = v end })
 eggTab:CreateSlider({ 
     Name = "Hatch Speed (s)", 
-    Range = {0.001, 1}, 
+    Range = {0.001, 0.05}, 
     Increment = 0.001, 
     Suffix = "s", 
     CurrentValue = hatchSpeed, 
     Callback = function(v) hatchSpeed = v end 
 })
-eggTab:CreateLabel("• 1 hatch per cycle")
-eggTab:CreateLabel("• 2 threads")
-eggTab:CreateSection("NESTS")
-eggTab:CreateToggle({ Name = "Enable Auto Nests", CurrentValue = config.autoNests, Callback = function(v) config.autoNests = v end })
 eggTab:CreateSlider({ 
     Name = "Nests Speed (s)", 
-    Range = {0.001, 1}, 
+    Range = {0.001, 0.05}, 
     Increment = 0.001, 
     Suffix = "s", 
     CurrentValue = nestsSpeed, 
     Callback = function(v) nestsSpeed = v end 
 })
-eggTab:CreateLabel("• All nests per cycle")
-eggTab:CreateLabel("• 2 threads")
+eggTab:CreateSection("CONTROLE")
+eggTab:CreateToggle({ Name = "Enable Auto Plant", CurrentValue = config.autoPlant, Callback = function(v) config.autoPlant = v end })
+eggTab:CreateToggle({ Name = "Enable Auto Hatch", CurrentValue = config.autoHatch, Callback = function(v) config.autoHatch = v end })
+eggTab:CreateToggle({ Name = "Enable Auto Nests", CurrentValue = config.autoNests, Callback = function(v) config.autoNests = v end })
 eggTab:CreateSection("Select Eggs to Plant")
 for _, egg in ipairs(eggData) do
     eggTab:CreateToggle({
@@ -600,6 +675,10 @@ for _, egg in ipairs(eggData) do
             else
                 local idx = table.find(eggsSelected, egg.zone)
                 if idx then table.remove(eggsSelected, idx) end
+            end
+            if active and config.autoPlant then
+                stopAllThreads()
+                start()
             end
         end
     })
@@ -752,8 +831,20 @@ UserInputService.InputBegan:Connect(function(input, gp)
         end
     end
 end)
+
+performance.lastFrameTime = os.clock()
+task.spawn(function()
+    while true do
+        task.wait(0.1)
+        local now = os.clock()
+        performance.fps = 1 / (now - performance.lastFrameTime + 0.001)
+        performance.lastFrameTime = now
+        autoOptimizeThreads()
+    end
+end)
+
 game:GetService("StarterGui"):SetCore("SendNotification", {
     Title = "Maveryk Hub",
-    Text = "Completo | Sacrifice Corrigido | Sphinx",
+    Text = "Ultra Eggs | Auto-Otimização",
     Duration = 3
 })
