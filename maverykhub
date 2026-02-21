@@ -123,7 +123,6 @@ local eggData = {
     { name = "Mythical Egg", zone = "13" },
     { name = "Legendary Egg", zone = "14" },
 }
-
 local function getZone(name)
     return cache.zones[name]
 end
@@ -209,15 +208,7 @@ local function collectFoodFromZone(zoneName)
     end
 end
 
-local function bossesWorker()
-    while active do
-        if config.farmBosses then
-            attackBosses()
-        end
-        task.wait(config.bossSpeed)
-    end
-end
-local function enemiesWorker()
+local function enemiesWorker1()
     while active do
         if config.farmEnemies then
             for idx, enemy in ipairs(enemyList) do
@@ -231,6 +222,30 @@ local function enemiesWorker()
             end
         end
         task.wait(config.enemiesSpeed)
+    end
+end
+local function enemiesWorker2()
+    while active do
+        if config.farmEnemies then
+            for idx, enemy in ipairs(enemyList) do
+                if enemyEnabled[idx] then
+                    if enemy.attackAll then
+                        attackAllEnemies(enemy.zone, enemy.needsRequest)
+                    else
+                        attackSpecificEnemy(enemy.zone, enemy.enemy, enemy.needsRequest)
+                    end
+                end
+            end
+        end
+        task.wait(config.enemiesSpeed)
+    end
+end
+local function bossesWorker()
+    while active do
+        if config.farmBosses then
+            attackBosses()
+        end
+        task.wait(config.bossSpeed)
     end
 end
 local function foodWorker()
@@ -278,7 +293,6 @@ local function nestsWorker()
         task.wait(config.nestsSpeed)
     end
 end
-
 local sacrificeActive = {
     queen = false,
     king = false,
@@ -358,7 +372,6 @@ local function bossScanWorker()
         task.wait(15)
     end
 end
-
 local function stopAllThreads()
     activeBosses = {}
 end
@@ -367,7 +380,8 @@ local function start()
     active = true
     scanBosses()
     task.spawn(bossesWorker)
-    task.spawn(enemiesWorker)
+    task.spawn(enemiesWorker1)
+    task.spawn(enemiesWorker2)
     task.spawn(foodWorker)
     task.spawn(plantWorker)
     task.spawn(hatchWorker)
@@ -386,6 +400,7 @@ local function stop()
     stopAllThreads()
     task.wait(1)
 end
+
 local win = Rayfield:CreateWindow({
     Name = "Maveryk Hub",
     LoadingTitle = "Pet Swarm Sim",
@@ -441,6 +456,7 @@ local enemiesTab = win:CreateTab("Enemies")
 enemiesTab:CreateSection("Enemy Farming")
 enemiesTab:CreateToggle({ Name = "Enable Enemies", CurrentValue = config.farmEnemies, Callback = function(v) config.farmEnemies = v end })
 enemiesTab:CreateSlider({ Name = "Speed (s)", Range = {0.1, 2}, Increment = 0.1, CurrentValue = config.enemiesSpeed, Callback = function(v) config.enemiesSpeed = v end })
+enemiesTab:CreateLabel("2 threads paralelas")
 enemiesTab:CreateSection("Event Enemies")
 enemiesTab:CreateToggle({ Name = "Summer (All)", CurrentValue = enemyEnabled[1], Callback = function(v) enemyEnabled[1] = v end })
 enemiesTab:CreateToggle({ Name = "Winter (All)", CurrentValue = enemyEnabled[2], Callback = function(v) enemyEnabled[2] = v end })
