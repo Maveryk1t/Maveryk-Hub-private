@@ -93,6 +93,7 @@ local config = {
     enemiesSpeed = 0.1,
     foodSpeed = 0.1,
     bossSpeed = 0.1,
+    enemyThreads = 1,
 }
 local bossList = {
     "Naga", "Lava Monster", "Tiki Monster",
@@ -148,11 +149,17 @@ local function getNests()
     end
     return cache.nests.value
 end
-local function attackWithAllPets(enemy)
+local petCounter = 0
+local function getNextPet()
     local pets = getPets()
-    if #pets == 0 then return end
-    for i = 1, #pets do
-        pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", enemy, pets[i])
+    if #pets == 0 then return nil end
+    petCounter = (petCounter % #pets) + 1
+    return pets[petCounter]
+end
+local function attackEnemyDistributed(enemy)
+    local pet = getNextPet()
+    if pet then
+        pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", enemy, pet)
     end
 end
 local function attackAllEnemies(zoneName, needsRequest)
@@ -164,7 +171,7 @@ local function attackAllEnemies(zoneName, needsRequest)
     if zone and zone:FindFirstChild("Enemies") then
         local enemies = zone.Enemies:GetChildren()
         for _, enemy in ipairs(enemies) do
-            attackWithAllPets(enemy)
+            attackEnemyDistributed(enemy)
         end
     end
 end
@@ -177,22 +184,18 @@ local function attackSpecificEnemy(zoneName, enemyName, needsRequest)
     if zone and zone:FindFirstChild("Enemies") then
         local enemy = zone.Enemies:FindFirstChild(enemyName)
         if enemy then
-            attackWithAllPets(enemy)
+            attackEnemyDistributed(enemy)
         end
     end
 end
 local function attackBosses()
     for _, boss in ipairs(activeBosses) do
         if boss and boss.Parent then
-            local pets = getPets()
-            if #pets > 0 then
-                for i = 1, #pets do
-                    pcall(CombatRemote.InvokeServer, CombatRemote, "AttackEnemy", boss, pets[i])
-                end
-            end
+            attackEnemyDistributed(boss)
         end
     end
 end
+local foodCounter = 0
 local function collectFoodFromZone(zoneName)
     local zone = getZone(zoneName)
     if zone and zone:FindFirstChild("FoodSpawns") then
@@ -200,44 +203,30 @@ local function collectFoodFromZone(zoneName)
         for _, f in ipairs(foods) do
             local pets = getPets()
             if #pets > 0 then
-                for i = 1, #pets do
-                    pcall(CollectionRemote.InvokeServer, CollectionRemote, "CollectFood", f, pets[i])
-                end
+                foodCounter = (foodCounter % #pets) + 1
+                pcall(CollectionRemote.InvokeServer, CollectionRemote, "CollectFood", f, pets[foodCounter])
             end
         end
     end
 end
 
-local function enemiesWorker1()
-    while active do
-        if config.farmEnemies then
-            for idx, enemy in ipairs(enemyList) do
-                if enemyEnabled[idx] then
-                    if enemy.attackAll then
-                        attackAllEnemies(enemy.zone, enemy.needsRequest)
-                    else
-                        attackSpecificEnemy(enemy.zone, enemy.enemy, enemy.needsRequest)
+local enemyWorkers = {}
+local function createEnemyWorker(workerId)
+    return function()
+        while active do
+            if config.farmEnemies then
+                for idx, enemy in ipairs(enemyList) do
+                    if enemyEnabled[idx] then
+                        if enemy.attackAll then
+                            attackAllEnemies(enemy.zone, enemy.needsRequest)
+                        else
+                            attackSpecificEnemy(enemy.zone, enemy.enemy, enemy.needsRequest)
+                        end
                     end
                 end
             end
+            task.wait(config.enemiesSpeed)
         end
-        task.wait(config.enemiesSpeed)
-    end
-end
-local function enemiesWorker2()
-    while active do
-        if config.farmEnemies then
-            for idx, enemy in ipairs(enemyList) do
-                if enemyEnabled[idx] then
-                    if enemy.attackAll then
-                        attackAllEnemies(enemy.zone, enemy.needsRequest)
-                    else
-                        attackSpecificEnemy(enemy.zone, enemy.enemy, enemy.needsRequest)
-                    end
-                end
-            end
-        end
-        task.wait(config.enemiesSpeed)
     end
 end
 local function bossesWorker()
@@ -372,21 +361,49 @@ local function bossScanWorker()
         task.wait(15)
     end
 end
+local function updateEnemyThreads()
+    for i = 1, #enemyWorkers do
+        if enemyWorkers[i] then
+            task.cancel(enemyWorkers[i])
+            enemyWorkers[i] = nil
+        end
+    end
+    for i = 1, config.enemyThreads do
+        enemyWorkers[i] = task.spawn(createEnemyWorker(i))
+    end
+end
+local allThreads = {}
 local function stopAllThreads()
+    for _, thread in ipairs(allThreads) do
+        if thread then
+            task.cancel(thread)
+        end
+    end
+    allThreads = {}
+    for i = 1, #enemyWorkers do
+        if enemyWorkers[i] then
+            task.cancel(enemyWorkers[i])
+            enemyWorkers[i] = nil
+        end
+    end
     activeBosses = {}
 end
 local function start()
     if active then return end
     active = true
     scanBosses()
-    task.spawn(bossesWorker)
-    task.spawn(enemiesWorker1)
-    task.spawn(enemiesWorker2)
-    task.spawn(foodWorker)
-    task.spawn(plantWorker)
-    task.spawn(hatchWorker)
-    task.spawn(nestsWorker)
-    task.spawn(bossScanWorker)
+    local threads = {
+        task.spawn(bossesWorker),
+        task.spawn(foodWorker),
+        task.spawn(plantWorker),
+        task.spawn(hatchWorker),
+        task.spawn(nestsWorker),
+        task.spawn(bossScanWorker)
+    }
+    for _, thread in ipairs(threads) do
+        table.insert(allThreads, thread)
+    end
+    updateEnemyThreads()
     if sacrificeActive.queen then toggleSacrifice("Queen Bee", true) end
     if sacrificeActive.king then toggleSacrifice("King Bee", true) end
     if sacrificeActive.frozen then toggleSacrifice("Frozen Werewolf", true) end
@@ -456,7 +473,13 @@ local enemiesTab = win:CreateTab("Enemies")
 enemiesTab:CreateSection("Enemy Farming")
 enemiesTab:CreateToggle({ Name = "Enable Enemies", CurrentValue = config.farmEnemies, Callback = function(v) config.farmEnemies = v end })
 enemiesTab:CreateSlider({ Name = "Speed (s)", Range = {0.1, 2}, Increment = 0.1, CurrentValue = config.enemiesSpeed, Callback = function(v) config.enemiesSpeed = v end })
-enemiesTab:CreateLabel("2 threads paralelas")
+enemiesTab:CreateSlider({ Name = "Threads (1-3)", Range = {1, 3}, Increment = 1, CurrentValue = config.enemyThreads, Callback = function(v) 
+    config.enemyThreads = v
+    if active then
+        updateEnemyThreads()
+    end
+end })
+enemiesTab:CreateLabel("1 pet por NPC em rodízio")
 enemiesTab:CreateSection("Event Enemies")
 enemiesTab:CreateToggle({ Name = "Summer (All)", CurrentValue = enemyEnabled[1], Callback = function(v) enemyEnabled[1] = v end })
 enemiesTab:CreateToggle({ Name = "Winter (All)", CurrentValue = enemyEnabled[2], Callback = function(v) enemyEnabled[2] = v end })
@@ -663,4 +686,3 @@ game:GetService("StarterGui"):SetCore("SendNotification", {
     Text = "Loaded successfully!",
     Duration = 3
 })
-
