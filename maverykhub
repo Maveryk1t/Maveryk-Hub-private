@@ -30,7 +30,6 @@ local cache = {
 }
 local enemiesBuffer = {}
 local foodsBuffer = {}
-local bossesBuffer = {}
 local zoneList = {
     "SummerEvent1", "WinterEvent1", "EleEgg1", "6", "4", "15", "10", "27",
     "30", "11", "34", "12.1", "1", "3", "7", "8", "9", "12", "13", "14",
@@ -232,7 +231,6 @@ local function collectFoodFromZone(zoneName)
         end
     end
 end
-
 local function bossesWorker()
     while active do
         if config.farmBosses and #activeBosses > 0 then
@@ -288,77 +286,36 @@ local function foodWorker()
     end
 end
 local function ultraHatchWorker()
-    local lastHatch = 0
-    local hatchInterval = config.hatchSpeed
-    local hatchCount = 0
-    local maxHatchPerCycle = 100
     while active do
         if config.autoHatch then
-            local now = os.clock()
-            if now - lastHatch >= hatchInterval then
-                for i = 1, 10 do
-                    pcall(HatchRemote.FireServer, HatchRemote)
-                    hatchCount = hatchCount + 1
-                    if hatchCount >= maxHatchPerCycle then
-                        hatchCount = 0
-                        task.wait(0.001)
-                    end
-                end
-                lastHatch = now
-            end
+            pcall(HatchRemote.FireServer, HatchRemote)
         end
-        task.wait()
+        task.wait(config.hatchSpeed)
     end
 end
 local function ultraPlantWorker()
-    local lastPlant = 0
-    local plantInterval = config.plantSpeed
-    local plantCount = 0
-    local maxPlantPerCycle = 50
     while active do
         if config.autoPlant and #eggsSelected > 0 then
-            local now = os.clock()
-            if now - lastPlant >= plantInterval then
-                for _, zone in ipairs(eggsSelected) do
-                    for _ = 1, 9 do
-                        pcall(PlantRemote.FireServer, PlantRemote, zone)
-                        plantCount = plantCount + 1
-                        if plantCount >= maxPlantPerCycle then
-                            plantCount = 0
-                            task.wait(0.001)
-                        end
-                    end
+            for _, zone in ipairs(eggsSelected) do
+                for _ = 1, 9 do
+                    pcall(PlantRemote.FireServer, PlantRemote, zone)
                 end
-                lastPlant = now
             end
         end
-        task.wait()
+        task.wait(config.plantSpeed)
     end
 end
 local function ultraNestsWorker()
-    local lastNest = 0
-    local nestInterval = config.nestsSpeed
-    local nestCount = 0
-    local maxNestPerCycle = 30
     while active do
         if config.autoNests then
-            local now = os.clock()
-            if now - lastNest >= nestInterval then
-                local nests = getNests()
-                if nests then
-                    for _, nest in ipairs(nests:GetChildren()) do
-                        pcall(FeedRemote.FireServer, FeedRemote, nest)
-                        nestCount = nestCount + 1
-                        if nestCount >= maxNestPerCycle then
-                            nestCount = 0
-                            task.wait(0.001)
-                        end
-                    end
+            local nests = getNests()
+            if nests then
+                for _, nest in ipairs(nests:GetChildren()) do
+                    pcall(FeedRemote.FireServer, FeedRemote, nest)
                 end
-                lastNest = now
             end
         end
-        task.wait()
+        task.wait(config.nestsSpeed)
     end
 end
 local function removeHatchAnimation()
@@ -479,7 +436,6 @@ local function stop()
     activeBosses = {}
     task.wait(1)
 end
-
 local win = Rayfield:CreateWindow({
     Name = "Maveryk Hub",
     LoadingTitle = "Pet Swarm Sim",
