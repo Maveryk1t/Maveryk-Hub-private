@@ -96,15 +96,12 @@ local config = {
     sacrificeMystic = false,
     doubleJump = false,
     wallspeed = 16,
-    plantSpeed = 0.05,
-    hatchSpeed = 0.05,
-    nestsSpeed = 0.05,
+    plantSpeed = 0.001,
+    hatchSpeed = 0.001,
+    nestsSpeed = 0.001,
     bossThreads = 1,
     enemyThreads = 1,
     foodThreads = 1,
-    plantThreads = 3,
-    hatchThreads = 3,
-    nestsThreads = 3,
 }
 local bossList = {
     "Naga", "Lava Monster", "Tiki Monster",
@@ -290,58 +287,78 @@ local function foodWorker()
         end
     end
 end
-local plantThreads = {}
-local hatchThreads = {}
-local nestsThreads = {}
-local plantCounter = 0
-local hatchCounter = 0
-local nestsCounter = 0
-local function plantWorker(id)
-    while active and plantThreads[id] do
-        if config.autoPlant and #eggsSelected > 0 then
-            plantCounter = plantCounter + 1
-            if plantCounter >= 10 then
-                plantCounter = 0
-                task.wait(0.01)
-            end
-            for _, zone in ipairs(eggsSelected) do
-                for _ = 1, 9 do
-                    pcall(PlantRemote.FireServer, PlantRemote, zone)
-                end
-            end
-        end
-        task.wait(config.plantSpeed)
-    end
-end
-local function hatchWorker(id)
-    while active and hatchThreads[id] do
+local function ultraHatchWorker()
+    local lastHatch = 0
+    local hatchInterval = config.hatchSpeed
+    local hatchCount = 0
+    local maxHatchPerCycle = 100
+    while active do
         if config.autoHatch then
-            hatchCounter = hatchCounter + 1
-            if hatchCounter >= 15 then
-                hatchCounter = 0
-                task.wait(0.01)
+            local now = os.clock()
+            if now - lastHatch >= hatchInterval then
+                for i = 1, 10 do
+                    pcall(HatchRemote.FireServer, HatchRemote)
+                    hatchCount = hatchCount + 1
+                    if hatchCount >= maxHatchPerCycle then
+                        hatchCount = 0
+                        task.wait(0.001)
+                    end
+                end
+                lastHatch = now
             end
-            pcall(HatchRemote.FireServer, HatchRemote)
         end
-        task.wait(config.hatchSpeed)
+        task.wait()
     end
 end
-local function nestsWorker(id)
-    while active and nestsThreads[id] do
-        if config.autoNests then
-            nestsCounter = nestsCounter + 1
-            if nestsCounter >= 8 then
-                nestsCounter = 0
-                task.wait(0.01)
-            end
-            local nests = getNests()
-            if nests then
-                for _, nest in ipairs(nests:GetChildren()) do
-                    pcall(FeedRemote.FireServer, FeedRemote, nest)
+local function ultraPlantWorker()
+    local lastPlant = 0
+    local plantInterval = config.plantSpeed
+    local plantCount = 0
+    local maxPlantPerCycle = 50
+    while active do
+        if config.autoPlant and #eggsSelected > 0 then
+            local now = os.clock()
+            if now - lastPlant >= plantInterval then
+                for _, zone in ipairs(eggsSelected) do
+                    for _ = 1, 9 do
+                        pcall(PlantRemote.FireServer, PlantRemote, zone)
+                        plantCount = plantCount + 1
+                        if plantCount >= maxPlantPerCycle then
+                            plantCount = 0
+                            task.wait(0.001)
+                        end
+                    end
                 end
+                lastPlant = now
             end
         end
-        task.wait(config.nestsSpeed)
+        task.wait()
+    end
+end
+local function ultraNestsWorker()
+    local lastNest = 0
+    local nestInterval = config.nestsSpeed
+    local nestCount = 0
+    local maxNestPerCycle = 30
+    while active do
+        if config.autoNests then
+            local now = os.clock()
+            if now - lastNest >= nestInterval then
+                local nests = getNests()
+                if nests then
+                    for _, nest in ipairs(nests:GetChildren()) do
+                        pcall(FeedRemote.FireServer, FeedRemote, nest)
+                        nestCount = nestCount + 1
+                        if nestCount >= maxNestPerCycle then
+                            nestCount = 0
+                            task.wait(0.001)
+                        end
+                    end
+                end
+                lastNest = now
+            end
+        end
+        task.wait()
     end
 end
 local function removeHatchAnimation()
@@ -362,25 +379,6 @@ local function removeHatchAnimation()
             Duration = 3
         })
     end
-end
-local function startEggThreads()
-    for i = 1, config.plantThreads do
-        plantThreads[i] = true
-        task.spawn(function() plantWorker(i) end)
-    end
-    for i = 1, config.hatchThreads do
-        hatchThreads[i] = true
-        task.spawn(function() hatchWorker(i) end)
-    end
-    for i = 1, config.nestsThreads do
-        nestsThreads[i] = true
-        task.spawn(function() nestsWorker(i) end)
-    end
-end
-local function stopEggThreads()
-    plantThreads = {}
-    hatchThreads = {}
-    nestsThreads = {}
 end
 local sacrificeActive = {
     queen = false, king = false, frozen = false, walrus = false, fennec = false, mystic = false
@@ -461,10 +459,12 @@ local function start()
     active = true
     updateZoneCache()
     scanBosses()
+    task.spawn(ultraHatchWorker)
+    task.spawn(ultraPlantWorker)
+    task.spawn(ultraNestsWorker)
     task.spawn(bossesWorker)
     task.spawn(enemiesWorker)
     task.spawn(foodWorker)
-    startEggThreads()
     task.spawn(bossScanWorker)
     if sacrificeActive.queen then toggleSacrifice("Queen Bee", true) end
     if sacrificeActive.king then toggleSacrifice("King Bee", true) end
@@ -476,7 +476,6 @@ end
 local function stop()
     active = false
     stopAllSacrifices()
-    stopEggThreads()
     activeBosses = {}
     task.wait(1)
 end
@@ -484,7 +483,7 @@ end
 local win = Rayfield:CreateWindow({
     Name = "Maveryk Hub",
     LoadingTitle = "Pet Swarm Sim",
-    LoadingSubtitle = "Hatch Otimizado",
+    LoadingSubtitle = "Ultra Rápido 0.001s",
     ConfigurationSaving = { Enabled = true, FolderName = "MaverykHub", FileName = "Config" },
     Theme = "Dark"
 })
@@ -537,7 +536,7 @@ enemiesTab:CreateSection("Enemy Farming")
 enemiesTab:CreateToggle({ Name = "Enable Enemies", CurrentValue = config.farmEnemies, Callback = function(v) config.farmEnemies = v end })
 enemiesTab:CreateSlider({
     Name = "Enemy Threads",
-    Range = {1, 10},
+    Range = {1, 3},
     Increment = 1,
     CurrentValue = config.enemyThreads,
     Callback = function(v) config.enemyThreads = v end
@@ -559,7 +558,7 @@ foodTab:CreateSection("Food Zones")
 foodTab:CreateToggle({ Name = "Enable Food", CurrentValue = config.farmFood, Callback = function(v) config.farmFood = v end })
 foodTab:CreateSlider({
     Name = "Food Threads",
-    Range = {1, 10},
+    Range = {1, 3},
     Increment = 1,
     CurrentValue = config.foodThreads,
     Callback = function(v) config.foodThreads = v end
@@ -571,7 +570,7 @@ bossTab:CreateSection("Boss Control")
 bossTab:CreateToggle({ Name = "Enable Boss Farming", CurrentValue = config.farmBosses, Callback = function(v) config.farmBosses = v end })
 bossTab:CreateSlider({
     Name = "Boss Threads",
-    Range = {1, 10},
+    Range = {1, 3},
     Increment = 1,
     CurrentValue = config.bossThreads,
     Callback = function(v) config.bossThreads = v end
@@ -588,52 +587,30 @@ for _, name in ipairs(bossList) do
     })
 end
 local eggTab = win:CreateTab("Eggs")
-eggTab:CreateSection("Eggs Control - Otimizado")
-eggTab:CreateLabel("⏱️ Pequenas pausas evitam acúmulo")
+eggTab:CreateSection("Eggs Control - Ultra Rápido")
+eggTab:CreateLabel("⚡ 0.001s com controle de fluxo")
 eggTab:CreateToggle({ Name = "Auto Plant", CurrentValue = config.autoPlant, Callback = function(v) config.autoPlant = v end })
 eggTab:CreateToggle({ Name = "Auto Hatch", CurrentValue = config.autoHatch, Callback = function(v) config.autoHatch = v end })
 eggTab:CreateToggle({ Name = "Auto Nests", CurrentValue = config.autoNests, Callback = function(v) config.autoNests = v end })
-eggTab:CreateSection("Threads")
-eggTab:CreateSlider({
-    Name = "Plant Threads",
-    Range = {1, 5},
-    Increment = 1,
-    CurrentValue = config.plantThreads,
-    Callback = function(v) config.plantThreads = v end
-})
-eggTab:CreateSlider({
-    Name = "Hatch Threads",
-    Range = {1, 5},
-    Increment = 1,
-    CurrentValue = config.hatchThreads,
-    Callback = function(v) config.hatchThreads = v end
-})
-eggTab:CreateSlider({
-    Name = "Nests Threads",
-    Range = {1, 5},
-    Increment = 1,
-    CurrentValue = config.nestsThreads,
-    Callback = function(v) config.nestsThreads = v end
-})
 eggTab:CreateSection("Speeds")
 eggTab:CreateSlider({
     Name = "Plant Speed",
-    Range = {0.01, 0.1},
-    Increment = 0.01,
+    Range = {0.001, 0.01},
+    Increment = 0.001,
     CurrentValue = config.plantSpeed,
     Callback = function(v) config.plantSpeed = v end
 })
 eggTab:CreateSlider({
     Name = "Hatch Speed",
-    Range = {0.01, 0.1},
-    Increment = 0.01,
+    Range = {0.001, 0.01},
+    Increment = 0.001,
     CurrentValue = config.hatchSpeed,
     Callback = function(v) config.hatchSpeed = v end
 })
 eggTab:CreateSlider({
     Name = "Nests Speed",
-    Range = {0.01, 0.1},
-    Increment = 0.01,
+    Range = {0.001, 0.01},
+    Increment = 0.001,
     CurrentValue = config.nestsSpeed,
     Callback = function(v) config.nestsSpeed = v end
 })
@@ -794,6 +771,6 @@ UserInputService.InputBegan:Connect(function(input, gp)
 end)
 game:GetService("StarterGui"):SetCore("SendNotification", {
     Title = "Maveryk Hub",
-    Text = "Hatch Otimizado - Sem Lag",
+    Text = "Ultra Rápido 0.001s",
     Duration = 3
 })
